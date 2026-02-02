@@ -24,7 +24,7 @@ variables:
 pool:
   name: Default        # اسم الـ Agent Pool في Azure DevOps
   demands:
-    - agent.name -equals mohamed-saleh   # اسم الـ agent على الـ EC2
+    - agent.name -equals MyEC2Agent   # اسم الـ agent على الـ EC2
 
 stages:
 - stage: Terraform
@@ -46,6 +46,7 @@ stages:
     # Terraform Init (S3 backend)
     # -------------------------
     - script: |
+        echo "Initializing Terraform with S3 backend..."
         terraform init \
           -backend-config="bucket=$(TF_STATE_BUCKET)" \
           -backend-config="key=$(TF_STATE_KEY)" \
@@ -55,22 +56,30 @@ stages:
     # -------------------------
     # Terraform Validate
     # -------------------------
-    - script: terraform validate
+    - script: |
+        echo "Validating Terraform configuration..."
+        terraform validate
       displayName: Terraform Validate
 
     # -------------------------
     # Terraform Plan
     # -------------------------
-    - script: terraform plan -out=tfplan
+    - script: |
+        echo "Creating Terraform plan..."
+        terraform plan -out=tfplan
       displayName: Terraform Plan
 
     # -------------------------
     # Terraform Apply OR Destroy
     # -------------------------
     - ${{ if eq(parameters.action, 'apply') }}:
-      - script: terraform apply -auto-approve tfplan
+      - script: |
+          echo "Applying Terraform plan..."
+          terraform apply -auto-approve tfplan
         displayName: Terraform Apply
 
     - ${{ if eq(parameters.action, 'destroy') }}:
-      - script: terraform destroy -auto-approve
+      - script: |
+          echo "Destroying Terraform infrastructure..."
+          terraform destroy -auto-approve
         displayName: Terraform Destroy
