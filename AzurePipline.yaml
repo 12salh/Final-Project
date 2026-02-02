@@ -17,7 +17,7 @@ variables:
   AWS_REGION: "us-east-1"
 
 pool:
-  vmImage: ubuntu-latest
+  vmImage: ubuntu-latest   # OK for now
 
 stages:
 - stage: Terraform
@@ -27,13 +27,11 @@ stages:
     displayName: Terraform Apply or Destroy
     steps:
 
-    # Install Terraform
     - task: TerraformInstaller@1
       displayName: Install Terraform
       inputs:
         terraformVersion: $(TF_VERSION)
 
-    # Verify AWS Credentials
     - task: AWSCLI@1
       displayName: AWS Identity Check
       inputs:
@@ -42,25 +40,15 @@ stages:
         awsCommand: "sts"
         awsSubCommand: "get-caller-identity"
 
-    # Terraform Init
-    - script: |
-        terraform init -input=false
+    - script: terraform init -input=false
       displayName: Terraform Init
-      workingDirectory: infra
 
-    # Terraform Validate
-    - script: |
-        terraform validate
+    - script: terraform validate
       displayName: Terraform Validate
-      workingDirectory: infra
 
-    # Terraform Plan
-    - script: |
-        terraform plan -out=tfplan
+    - script: terraform plan -out=tfplan
       displayName: Terraform Plan
-      workingDirectory: infra
 
-    # Apply or Destroy
     - script: |
         if [ "${{ parameters.action }}" = "apply" ]; then
           terraform apply -auto-approve tfplan
@@ -68,4 +56,3 @@ stages:
           terraform destroy -auto-approve
         fi
       displayName: Terraform Apply or Destroy
-      workingDirectory: infra
