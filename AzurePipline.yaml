@@ -18,8 +18,13 @@ variables:
   TF_STATE_BUCKET: "your-terraform-state-bucket"
   TF_STATE_KEY: "eks/terraform.tfstate"
 
+# --------------------------------
+# استخدم الـ EC2 self-hosted agent
+# --------------------------------
 pool:
-  vmImage: ubuntu-latest   # Microsoft-hosted agent
+  name: Default        # اسم الـ Agent Pool اللي حطيته في Azure DevOps
+  demands:
+    - agent.name -equals mohamed-saleh   # اسم الـ agent على الـ EC2
 
 stages:
 - stage: Terraform
@@ -49,6 +54,7 @@ stages:
         backendAWSRegion: $(AWS_REGION)
         backendAWSBucketName: nti-terraform-states
         backendAWSKey: eks/terraform.tfstate
+
     # -------------------------
     # Terraform Validate
     # -------------------------
