@@ -35,9 +35,11 @@ stages:
       inputs:
         awsCredentials: $(AWS_CONNECTION)
         regionName: $(AWS_REGION)
-        command: 'sts get-caller-identity'
-
-    # -------------------------
+        awsCommand: sts
+        awsSubCommand: get-caller-identity
+      
+      
+      # -------------------------
     # Install Terraform
     # -------------------------
     - task: TerraformInstaller@1
