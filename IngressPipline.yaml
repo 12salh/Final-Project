@@ -64,24 +64,23 @@ pipeline {
         }
 
         stage('Install Argo CD & Ingress') {
+            when {
+            expression { params.ACTION == 'apply' }
+            }
             steps {
-                dir('Ingress') {
-                    sh '''
-                    # تثبيت Argo CD
-                    kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
-                    kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
-                    kubectl patch svc argocd-server -n argocd -p '{"spec":{"type":"ClusterIP"}}'
-
-                    # قراءة NLB DNS تلقائياً من Nginx Ingress Controller
-                    NLB_DNS=$(kubectl get svc nginx-ingress-controller -n ingress-nginx -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-                    echo "Using NLB DNS: $NLB_DNS"
-
-                    # استبدال host في Argo CD Ingress وتطبيقه
-                    sed "s|<NLB-DNS-HOSTNAME>|$NLB_DNS|g" argocd-ingress.yaml | kubectl apply -f -
-                    '''
+                dir("${WORK_DIR}") {
+                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws_cred']]) {
+                        sh """
+                            aws eks update-kubeconfig --region ${AWS_DEFAULT_REGION} --name ${CLUSTER_NAME}
+                            kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
+                            kubectl apply -f argocd-manifest.yaml
+                            helm upgrade --install nginx-ingress ingress-nginx --namespace ingress-nginx -f nginx-values.yaml
+                        """
+                    }
                 }
             }
         }
+
 
         stage('Terraform Destroy') {
             when { expression { params.ACTION == 'destroy' } }
