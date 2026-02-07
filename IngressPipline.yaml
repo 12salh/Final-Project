@@ -11,8 +11,8 @@ pipeline {
 
     environment {
         AWS_DEFAULT_REGION = 'us-east-1'
-        TF_STATE_BUCKET   = 'nti-terraform-states'
-        TF_STATE_KEY      = 'eks/terraform.tfstate'
+        TF_STATE_BUCKET   = 'nti-terraform-states-1'
+        TF_STATE_KEY      = 'eks/nonprod/terraform.tfstate'
         WORK_DIR          = 'Ingress'
         CLUSTER_NAME      = 'nti-nonprod-eks'
     }
