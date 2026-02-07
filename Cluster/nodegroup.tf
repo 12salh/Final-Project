@@ -31,9 +31,11 @@ resource "aws_iam_role_policy_attachment" "ecr" {
 
 
 resource "aws_eks_node_group" "this" {
+  depends_on = [null_resource.wait_for_cluster]
+
   cluster_name    = aws_eks_cluster.this.name
   node_group_name = "${local.name_prefix}-platform-ng"
-  node_role_arn  = aws_iam_role.node_role.arn
+  node_role_arn   = aws_iam_role.node_role.arn
 
   subnet_ids = [
     aws_subnet.presentation_1.id,
