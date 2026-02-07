@@ -11,7 +11,7 @@ pipeline {
 
     environment {
         AWS_DEFAULT_REGION = 'us-east-1'
-        TF_STATE_BUCKET   = 'nti-terraform-states'
+        TF_STATE_BUCKET   = 'nti-terraform-states-1'
         TF_STATE_KEY      = 'eks/terraform.tfstate'
     }
 
