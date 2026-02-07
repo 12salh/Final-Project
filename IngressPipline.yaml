@@ -86,7 +86,7 @@ pipeline {
                             kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
 
                             # تطبيق ملفات Argo CD manifests
-                            kubectl apply -f argocd-manifest.yaml
+                            kubectl apply -f argocd-ingress.yaml
 
                             # تثبيت أو تحديث Nginx Ingress عبر Helm
                             helm upgrade --install nginx-ingress ingress-nginx --namespace ingress-nginx -f nginx-values.yaml
