@@ -16,17 +16,21 @@ pipeline {
     TF_STATE_BUCKET = 'nti-terraform-states-1'
     TF_STATE_KEY    = 'eks/nonprod/terraform.tfstate'
 
-    // مسار kubeconfig داخل الـ workspace
+    // نحفظ kubeconfig داخل الـ workspace ونستخدمه صراحة في كل الأوامر
     KUBECONFIG_PATH = "${env.WORKSPACE}/kubeconfig"
 
-    // لو بتستخدم Proxy، فعّل وضبط NO_PROXY هنا
-    // NO_PROXY = "127.0.0.1,localhost,svc,.svc,cluster.local,.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,gr7.us-east-1.eks.amazonaws.com"
+    // (اختياري) لو عندك بروكسي، فعل السطور دي واضبط NO_PROXY:
+    // HTTP_PROXY  = 'http://proxy.example:8080'
+    // HTTPS_PROXY = 'http://proxy.example:8080'
+    // NO_PROXY    = '127.0.0.1,localhost,svc,.svc,cluster.local,.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,gr7.us-east-1.eks.amazonaws.com'
   }
 
   stages {
 
     stage('Checkout') {
-      steps { checkout scm }
+      steps {
+        checkout scm
+      }
     }
 
     stage('Terraform Init') {
@@ -35,6 +39,7 @@ pipeline {
           dir('Ingress') {
             sh '''
               set -euxo pipefail
+
               terraform init -reconfigure \
                 -backend-config="bucket=${TF_STATE_BUCKET}" \
                 -backend-config="key=${TF_STATE_KEY}" \
@@ -80,14 +85,31 @@ pipeline {
           sh '''
             set -euxo pipefail
 
-            # اكتب kubeconfig في مسار معروف بدل ~/.kube/config
+            # نولد/نحدّث kubeconfig في مسار معروف
             aws eks update-kubeconfig \
               --region "${AWS_DEFAULT_REGION}" \
               --name "${CLUSTER_NAME}" \
               --kubeconfig "${KUBECONFIG_PATH}"
 
-            # فحوصات سريعة
-            kubectl --kubeconfig "${KUBECONFIG_PATH}" version --short
+            # اطبع نسخ العميل/الخادم بصيغ متوافقة (بدون --short)
+            kubectl --kubeconfig "${KUBECONFIG_PATH}" version -o json | jq -r '.clientVersion.gitVersion, .serverVersion.gitVersion' || true
+            kubectl --kubeconfig "${KUBECONFIG_PATH}" get --raw /version | jq || true
+          '''
+        }
+      }
+    }
+
+    stage('Preflight (Cluster Access)') {
+      when { expression { params.ACTION == 'apply' } }
+      steps {
+        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws_cred']]) {
+          sh '''
+            set -euxo pipefail
+
+            # تأكد من هوية AWS (مهم لنجاح exec auth)
+            aws sts get-caller-identity
+
+            # تأكد من الوصول للكلاستر وقراءة مخطط OpenAPI وصلاحيات إنشاء namespace
             kubectl --kubeconfig "${KUBECONFIG_PATH}" cluster-info
             kubectl --kubeconfig "${KUBECONFIG_PATH}" get --raw /openapi/v2 | head -n 1
             kubectl --kubeconfig "${KUBECONFIG_PATH}" auth can-i create namespace
@@ -104,22 +126,22 @@ pipeline {
           sh '''
             set -euxo pipefail
 
-            # أنشئ namespace (لو validation لسه بتفشل لأي سبب، ممكن مؤقتًا تضيف --validate=false)
+            # إنشاء/تأكيد namespace
             kubectl --kubeconfig "${KUBECONFIG_PATH}" create namespace argocd --dry-run=client -o yaml | \
               kubectl --kubeconfig "${KUBECONFIG_PATH}" apply -f -
 
-            # Helm repo
+            # إضافة وتحديث مستودع Helm
             helm repo add argo https://argoproj.github.io/argo-helm
             helm repo update
 
-            # Install/Upgrade Argo CD
+            # تثبيت/تحديث Argo CD
             helm upgrade --install argocd argo/argo-cd \
               --namespace argocd \
               --create-namespace \
               --wait \
               --kubeconfig "${KUBECONFIG_PATH}"
 
-            # (اختياري) تأكيد أن الـ pods جاهزة
+            # تأكيد التشغيل
             kubectl --kubeconfig "${KUBECONFIG_PATH}" -n argocd get pods
           '''
         }
@@ -133,7 +155,7 @@ pipeline {
           sh '''
             set -euxo pipefail
 
-            # نضمن وجود kubeconfig قبل الحذف (لو الستيدج دي ممكن تتشغل مستقل)
+            # نضمن kubeconfig صالح في حالة تشغيل destroy منفردًا
             aws eks update-kubeconfig \
               --region "${AWS_DEFAULT_REGION}" \
               --name "${CLUSTER_NAME}" \
@@ -158,6 +180,25 @@ pipeline {
           }
         }
       }
+    }
+  }
+
+  post {
+    always {
+      // (اختياري) أرشف ملفات التخطيط/اللوج
+      script {
+        try {
+          archiveArtifacts artifacts: 'Ingress/tfplan', allowEmptyArchive: true
+        } catch (err) {
+          echo "No plan file to archive."
+        }
+      }
+    }
+    failure {
+      echo 'Pipeline failed. Check logs above for details.'
+    }
+    success {
+      echo 'Pipeline finished successfully.'
     }
   }
 }
