@@ -7,6 +7,11 @@ pipeline {
       choices: ['apply', 'destroy'],
       description: 'Terraform Action'
     )
+    booleanParam(
+      name: 'SONARQUBE_ENABLED',
+      defaultValue: false,
+      description: 'Run SonarQube analysis (requires sonar-project.properties)'
+    )
   }
 
   environment {
@@ -16,13 +21,12 @@ pipeline {
     TF_STATE_BUCKET = 'nti-terraform-states-1'
     TF_STATE_KEY    = 'eks/nonprod/terraform.tfstate'
 
-    // نحفظ kubeconfig داخل الـ workspace ونستخدمه صراحة في كل الأوامر
+    // مسار kubeconfig داخل الـ workspace
     KUBECONFIG_PATH = "${env.WORKSPACE}/kubeconfig"
 
-    // (اختياري) لو عندك بروكسي، فعل السطور دي واضبط NO_PROXY:
-    // HTTP_PROXY  = 'http://proxy.example:8080'
-    // HTTPS_PROXY = 'http://proxy.example:8080'
-    // NO_PROXY    = '127.0.0.1,localhost,svc,.svc,cluster.local,.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,gr7.us-east-1.eks.amazonaws.com'
+    // إعدادات SonarQube (لا تغيّر باقي البايبلاين)
+    SONARQUBE_SERVER = 'SonarServer'   // اسم السيرفر المعرّف في Jenkins
+    SONAR_SCANNER    = 'SonarScanner'  // اسم الأداة المعرّفة في Jenkins Tools
   }
 
   stages {
@@ -32,6 +36,48 @@ pipeline {
         checkout scm
       }
     }
+
+    // ===================== SonarQube (اختياري) =====================
+    stage('SonarQube Scan') {
+      when {
+        allOf {
+          expression { return params.SONARQUBE_ENABLED }
+          expression { return fileExists('sonar-project.properties') }
+        }
+      }
+      steps {
+        script {
+          echo "SonarQube is enabled and sonar-project.properties found. Running analysis…"
+        }
+        withSonarQubeEnv("${SONARQUBE_SERVER}") {
+          withEnv(["PATH+SONAR=${tool "${SONAR_SCANNER}"}/bin"]) {
+            sh '''
+              set -euxo pipefail
+              sonar-scanner
+            '''
+          }
+        }
+      }
+    }
+
+    stage('Quality Gate') {
+      when {
+        allOf {
+          expression { return params.SONARQUBE_ENABLED }
+          expression { return fileExists('sonar-project.properties') }
+        }
+      }
+      steps {
+        script {
+          // يفضّل تكوين Webhook من SonarQube إلى Jenkins لسرعة الرد
+          timeout(time: 5, unit: 'MINUTES') {
+            def qg = waitForQualityGate() // سيفشل الستيج لو الحالة FAILED
+            echo "Quality Gate status: ${qg.status}"
+          }
+        }
+      }
+    }
+    // ===============================================================
 
     stage('Terraform Init') {
       steps {
@@ -85,13 +131,12 @@ pipeline {
           sh '''
             set -euxo pipefail
 
-            # نولد/نحدّث kubeconfig في مسار معروف
             aws eks update-kubeconfig \
               --region "${AWS_DEFAULT_REGION}" \
               --name "${CLUSTER_NAME}" \
               --kubeconfig "${KUBECONFIG_PATH}"
 
-            # اطبع نسخ العميل/الخادم بصيغ متوافقة (بدون --short)
+            # عرض نسخ العميل والخادم بدون --short (توافق أعلى)
             kubectl --kubeconfig "${KUBECONFIG_PATH}" version -o json | jq -r '.clientVersion.gitVersion, .serverVersion.gitVersion' || true
             kubectl --kubeconfig "${KUBECONFIG_PATH}" get --raw /version | jq || true
           '''
@@ -106,10 +151,7 @@ pipeline {
           sh '''
             set -euxo pipefail
 
-            # تأكد من هوية AWS (مهم لنجاح exec auth)
             aws sts get-caller-identity
-
-            # تأكد من الوصول للكلاستر وقراءة مخطط OpenAPI وصلاحيات إنشاء namespace
             kubectl --kubeconfig "${KUBECONFIG_PATH}" cluster-info
             kubectl --kubeconfig "${KUBECONFIG_PATH}" get --raw /openapi/v2 | head -n 1
             kubectl --kubeconfig "${KUBECONFIG_PATH}" auth can-i create namespace
@@ -126,22 +168,18 @@ pipeline {
           sh '''
             set -euxo pipefail
 
-            # إنشاء/تأكيد namespace
             kubectl --kubeconfig "${KUBECONFIG_PATH}" create namespace argocd --dry-run=client -o yaml | \
               kubectl --kubeconfig "${KUBECONFIG_PATH}" apply -f -
 
-            # إضافة وتحديث مستودع Helm
-            helm repo add argo https://argoproj.github.io/argo-helm
+            helm repo add argo https://argoproj.github.io/argo-helm || true
             helm repo update
 
-            # تثبيت/تحديث Argo CD
             helm upgrade --install argocd argo/argo-cd \
               --namespace argocd \
               --create-namespace \
               --wait \
               --kubeconfig "${KUBECONFIG_PATH}"
 
-            # تأكيد التشغيل
             kubectl --kubeconfig "${KUBECONFIG_PATH}" -n argocd get pods
           '''
         }
@@ -155,7 +193,6 @@ pipeline {
           sh '''
             set -euxo pipefail
 
-            # نضمن kubeconfig صالح في حالة تشغيل destroy منفردًا
             aws eks update-kubeconfig \
               --region "${AWS_DEFAULT_REGION}" \
               --name "${CLUSTER_NAME}" \
@@ -185,7 +222,6 @@ pipeline {
 
   post {
     always {
-      // (اختياري) أرشف ملفات التخطيط/اللوج
       script {
         try {
           archiveArtifacts artifacts: 'Ingress/tfplan', allowEmptyArchive: true
